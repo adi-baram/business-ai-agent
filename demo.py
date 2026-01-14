@@ -145,14 +145,35 @@ def run_demo():
     # Closing message
     console.print(
         Panel.fit(
-            "[bold green]Demo complete![/bold green]\n\n"
-            "To ask your own questions:\n"
-            "  python -c \"from src.agent import get_agent; print(get_agent()('your question'))\"\n\n"
-            "To run tests:\n"
-            "  pytest tests/ -v",
+            "[bold green]Demo complete![/bold green]",
             border_style="green",
         )
     )
+    console.print()
+
+    # Offer interactive mode
+    console.print("[dim]You can now ask your own questions, or type 'quit' to exit.[/dim]")
+    console.print("[dim]To run tests: pytest tests/ -v[/dim]\n")
+
+    while True:
+        try:
+            question = console.input("[bold cyan]You:[/bold cyan] ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Goodbye![/dim]")
+            break
+
+        if not question:
+            continue
+
+        if question.lower() in ("quit", "exit", "q"):
+            console.print("[dim]Goodbye![/dim]")
+            break
+
+        try:
+            response = agent(question)
+            console.print(f"\n[bold yellow]Agent:[/bold yellow] {response}\n")
+        except Exception as e:
+            console.print(f"[red]Error:[/red] {e}\n")
 
 
 if __name__ == "__main__":

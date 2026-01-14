@@ -77,15 +77,16 @@ This creates two CSV files:
 
 ### Step 6: Run the Demo
 
-**Quick demo (3 questions):**
-```bash
-python demo_short.py
-```
+Three options to interact with the agent:
 
-**Full demo (9 questions, all tools):**
-```bash
-python demo.py
-```
+| Script | Description |
+|--------|-------------|
+| `python demo_short.py` | **Recommended.** Runs 3 demo questions, then interactive mode |
+| `python demo.py` | Full demo (9 questions showcasing all tools), then interactive mode |
+| `python chat.py` | Interactive Q&A only (type `help` for example questions) |
+
+All scripts enter interactive mode where you can ask your own questions.
+Type `quit` to exit.
 
 ---
 
@@ -127,8 +128,9 @@ business-ai-agent/
 │   ├── data_loader.py  # Data access layer
 │   └── config.py       # Configuration
 ├── tests/              # 123 unit tests
-├── demo_short.py       # Quick demo (3 questions)
-├── demo.py             # Full demo (9 questions)
+├── demo_short.py       # Quick demo (3 questions) + interactive mode
+├── demo.py             # Full demo (9 questions) + interactive mode
+├── chat.py             # Interactive Q&A only
 ├── generate_data.py    # Data generator
 ├── requirements.txt    # Dependencies
 ├── .env.example        # API key template

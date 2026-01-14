@@ -92,11 +92,35 @@ def run_demo():
 
     console.print(
         Panel.fit(
-            "[green]Demo complete![/green]\n\n"
-            "For full demo with all tools: python demo.py",
+            "[green]Demo complete![/green]",
             border_style="green",
         )
     )
+    console.print()
+
+    # Offer interactive mode
+    console.print("[dim]You can now ask your own questions, or type 'quit' to exit.[/dim]")
+    console.print("[dim]For full demo with all 9 tools: python demo.py[/dim]\n")
+
+    while True:
+        try:
+            question = console.input("[bold cyan]You:[/bold cyan] ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Goodbye![/dim]")
+            break
+
+        if not question:
+            continue
+
+        if question.lower() in ("quit", "exit", "q"):
+            console.print("[dim]Goodbye![/dim]")
+            break
+
+        try:
+            response = agent(question)
+            console.print(f"\n[bold yellow]Agent:[/bold yellow] {response}\n")
+        except Exception as e:
+            console.print(f"[red]Error:[/red] {e}\n")
 
 
 if __name__ == "__main__":
