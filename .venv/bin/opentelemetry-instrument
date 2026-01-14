@@ -1,4 +1,4 @@
-#!/Users/adibaram/Documents/projects/business-ai-agent/.venv/bin/python
+#!/Users/adibaram/Documents/projects/business-ai-agent/.venv/bin/python3.14
 import sys
 from opentelemetry.instrumentation.auto_instrumentation import run
 if __name__ == '__main__':

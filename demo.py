@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""
+Demonstration script for the business analytics agent.
+
+Runs 2-3 representative queries showcasing:
+1. Basic aggregation (revenue by category)
+2. Agent capabilities explanation
+
+Usage:
+    python demo.py
+
+Requirements:
+    - Run 'python generate_data.py' first to create data files
+    - Set OPENAI_API_KEY in .env file
+"""
+from __future__ import annotations
+
+import sys
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+
+console = Console()
+
+DEMO_QUESTIONS = [
+    {
+        "question": "What is our total revenue by category?",
+        "description": "Basic aggregation - shows revenue breakdown across product categories",
+    },
+    {
+        "question": "What can you help me analyze?",
+        "description": "Capabilities - shows what analyses are available",
+    },
+]
+
+
+def print_data_context():
+    """Print information about the loaded data."""
+    from src.data_loader import get_data_manager
+
+    dm = get_data_manager()
+
+    table = Table(title="Dataset Information", show_header=False)
+    table.add_column("Property", style="cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("Data Period", f"{dm.data_start.date()} to {dm.data_end.date()}")
+    table.add_row("Transactions", f"{dm.transaction_count:,}")
+    table.add_row("Customers", f"{dm.customer_count:,}")
+    table.add_row("Current Month", f"{dm.current_month_start.date()} to {dm.current_month_end.date()}")
+
+    console.print(table)
+    console.print()
+
+
+def run_demo():
+    """Execute the demonstration."""
+    console.print(
+        Panel.fit(
+            "[bold blue]Business Analytics AI Agent Demo[/bold blue]\n"
+            "Powered by Strands SDK + OpenAI GPT-4o",
+            border_style="blue",
+        )
+    )
+    console.print()
+
+    # Import and validate setup
+    try:
+        from src.agent import create_agent
+        from src.data_loader import get_data_manager
+    except ImportError as e:
+        console.print(f"[red]Import error:[/red] {e}")
+        console.print("Make sure you're in the project root directory.")
+        sys.exit(1)
+
+    # Check for data files
+    try:
+        print_data_context()
+    except FileNotFoundError as e:
+        console.print(f"[red]Data not found:[/red] {e}")
+        console.print("\nRun 'python generate_data.py' to create the data files.")
+        sys.exit(1)
+
+    # Create agent
+    console.print("[dim]Initializing agent...[/dim]")
+    try:
+        agent = create_agent()
+    except ValueError as e:
+        console.print(f"[red]Configuration error:[/red] {e}")
+        console.print("\nMake sure OPENAI_API_KEY is set in your .env file.")
+        sys.exit(1)
+
+    console.print("[green]Agent ready![/green]\n")
+
+    # Run demo questions
+    for i, item in enumerate(DEMO_QUESTIONS, 1):
+        console.rule(f"[bold]Demo {i}: {item['description']}[/bold]")
+        console.print(f"\n[cyan]Question:[/cyan] {item['question']}\n")
+
+        try:
+            response = agent(item["question"])
+            console.print("[yellow]Response:[/yellow]")
+            console.print(response)
+        except Exception as e:
+            console.print(f"[red]Error:[/red] {e}")
+
+        console.print()
+
+    # Closing message
+    console.print(
+        Panel.fit(
+            "[bold green]Demo complete![/bold green]\n\n"
+            "To ask your own questions:\n"
+            "  python -c \"from src.agent import get_agent; print(get_agent()('your question'))\"\n\n"
+            "To run tests:\n"
+            "  pytest tests/ -v",
+            border_style="green",
+        )
+    )
+
+
+if __name__ == "__main__":
+    run_demo()

@@ -1,0 +1,14 @@
+# Core dependencies
+strands-agents>=0.1.0
+openai>=1.0.0
+pandas>=2.0.0
+pydantic>=2.4.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+
+# Demo/CLI
+rich>=13.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
