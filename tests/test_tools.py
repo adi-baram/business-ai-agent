@@ -21,8 +21,11 @@ from src.tools import (
     get_customer_ltv,
     get_data_overview,
     get_month_over_month,
+    get_payment_method_analysis,
     get_return_rates,
     get_revenue_by_category,
+    get_revenue_trends,
+    get_segment_comparison,
 )
 
 
@@ -245,7 +248,7 @@ class TestExplainCapabilities:
         assert "explain_capabilities" in tool_names
 
     def test_includes_all_tools(self):
-        """Capabilities include all 7 tools."""
+        """Capabilities include all 10 tools."""
         result = explain_capabilities()
         tool_names = {item["tool_name"] for item in result["data"]}
         expected_tools = {
@@ -255,6 +258,9 @@ class TestExplainCapabilities:
             "compare_regions",
             "get_month_over_month",
             "get_data_overview",
+            "get_payment_method_analysis",
+            "get_segment_comparison",
+            "get_revenue_trends",
             "explain_capabilities",
         }
         assert tool_names == expected_tools
@@ -601,3 +607,274 @@ class TestGetMonthOverMonth:
             assert trend == "decline"
         else:
             assert trend == "stable"
+
+
+# === Payment Method Analysis Tests ===
+
+
+class TestGetPaymentMethodAnalysis:
+    """Tests for get_payment_method_analysis tool."""
+
+    def test_returns_dict(self):
+        """Tool returns a dictionary."""
+        result = get_payment_method_analysis()
+        assert isinstance(result, dict)
+
+    def test_has_required_keys(self):
+        """Response has required keys."""
+        result = get_payment_method_analysis()
+        assert "tool_used" in result
+        assert "summary" in result
+        assert "data" in result
+        assert "total_revenue" in result
+        assert "most_popular_method" in result
+        assert "highest_avg_value_method" in result
+        assert "metadata" in result
+
+    def test_all_payment_methods_present(self):
+        """All 4 payment methods are included."""
+        result = get_payment_method_analysis()
+        methods = {item["payment_method"] for item in result["data"]}
+        assert methods == VALID_PAYMENT_METHODS
+
+    def test_payment_method_has_required_fields(self):
+        """Each payment method has required fields."""
+        result = get_payment_method_analysis()
+        for item in result["data"]:
+            assert "payment_method" in item
+            assert "total_revenue" in item
+            assert "transaction_count" in item
+            assert "avg_transaction_value" in item
+            assert "percentage_of_transactions" in item
+            assert "return_rate_percent" in item
+
+    def test_percentages_sum_to_100(self):
+        """Transaction percentages sum to 100%."""
+        result = get_payment_method_analysis()
+        total_pct = sum(item["percentage_of_transactions"] for item in result["data"])
+        assert abs(total_pct - 100.0) < 0.5
+
+    def test_sorted_by_transaction_count_descending(self):
+        """Payment methods sorted by transaction count descending."""
+        result = get_payment_method_analysis()
+        counts = [item["transaction_count"] for item in result["data"]]
+        assert counts == sorted(counts, reverse=True)
+
+    def test_most_popular_matches_first(self):
+        """most_popular_method matches first in sorted list."""
+        result = get_payment_method_analysis()
+        assert result["most_popular_method"] == result["data"][0]["payment_method"]
+
+    def test_category_filter(self):
+        """Category filter applies correctly."""
+        result = get_payment_method_analysis(category="electronics")
+        assert result["metadata"]["filters_applied"]["category"] == "electronics"
+
+    def test_region_filter(self):
+        """Region filter applies correctly."""
+        result = get_payment_method_analysis(region="north")
+        assert result["metadata"]["filters_applied"]["region"] == "north"
+
+    def test_invalid_category_returns_error(self):
+        """Invalid category returns structured error."""
+        result = get_payment_method_analysis(category="invalid")
+        assert result["ok"] == False
+        assert result["error_type"] == "invalid_input"
+
+    def test_invalid_region_returns_error(self):
+        """Invalid region returns structured error."""
+        result = get_payment_method_analysis(region="invalid")
+        assert result["ok"] == False
+        assert result["error_type"] == "invalid_input"
+
+    def test_all_metrics_non_negative(self):
+        """All metric values are non-negative."""
+        result = get_payment_method_analysis()
+        for item in result["data"]:
+            assert item["total_revenue"] >= 0
+            assert item["transaction_count"] >= 0
+            assert item["avg_transaction_value"] >= 0
+            assert item["return_rate_percent"] >= 0
+
+
+# === Segment Comparison Tests ===
+
+
+class TestGetSegmentComparison:
+    """Tests for get_segment_comparison tool."""
+
+    def test_returns_dict(self):
+        """Tool returns a dictionary."""
+        result = get_segment_comparison()
+        assert isinstance(result, dict)
+
+    def test_has_required_keys(self):
+        """Response has required keys."""
+        result = get_segment_comparison()
+        assert "tool_used" in result
+        assert "summary" in result
+        assert "data" in result
+        assert "top_segment_by_revenue" in result
+        assert "top_segment_by_avg_value" in result
+        assert "total_customers" in result
+        assert "metadata" in result
+
+    def test_all_segments_present(self):
+        """All 3 segments are included."""
+        result = get_segment_comparison()
+        segments = {item["segment"] for item in result["data"]}
+        assert segments == VALID_SEGMENTS
+
+    def test_segment_has_required_fields(self):
+        """Each segment has required fields."""
+        result = get_segment_comparison()
+        for item in result["data"]:
+            assert "segment" in item
+            assert "total_revenue" in item
+            assert "customer_count" in item
+            assert "transaction_count" in item
+            assert "avg_transaction_value" in item
+            assert "avg_transactions_per_customer" in item
+            assert "return_rate_percent" in item
+            assert "percentage_of_revenue" in item
+
+    def test_percentages_sum_to_100(self):
+        """Revenue percentages sum to 100%."""
+        result = get_segment_comparison()
+        total_pct = sum(item["percentage_of_revenue"] for item in result["data"])
+        assert abs(total_pct - 100.0) < 0.5
+
+    def test_sorted_by_revenue_descending(self):
+        """Segments sorted by revenue descending."""
+        result = get_segment_comparison()
+        revenues = [item["total_revenue"] for item in result["data"]]
+        assert revenues == sorted(revenues, reverse=True)
+
+    def test_top_segment_by_revenue_matches_first(self):
+        """top_segment_by_revenue matches first in sorted list."""
+        result = get_segment_comparison()
+        assert result["top_segment_by_revenue"] == result["data"][0]["segment"]
+
+    def test_customer_counts_sum_to_total(self):
+        """Customer counts sum to total_customers."""
+        result = get_segment_comparison()
+        total_from_data = sum(item["customer_count"] for item in result["data"])
+        assert total_from_data == result["total_customers"]
+
+    def test_region_filter(self):
+        """Region filter applies correctly."""
+        result = get_segment_comparison(region="north")
+        assert result["metadata"]["filters_applied"]["region"] == "north"
+
+    def test_invalid_region_returns_error(self):
+        """Invalid region returns structured error."""
+        result = get_segment_comparison(region="invalid")
+        assert result["ok"] == False
+        assert result["error_type"] == "invalid_input"
+
+    def test_all_metrics_positive(self):
+        """All metric values are positive."""
+        result = get_segment_comparison()
+        for item in result["data"]:
+            assert item["total_revenue"] > 0
+            assert item["customer_count"] > 0
+            assert item["transaction_count"] > 0
+            assert item["avg_transaction_value"] > 0
+
+
+# === Revenue Trends Tests ===
+
+
+class TestGetRevenueTrends:
+    """Tests for get_revenue_trends tool."""
+
+    def test_returns_dict(self):
+        """Tool returns a dictionary."""
+        result = get_revenue_trends()
+        assert isinstance(result, dict)
+
+    def test_has_required_keys(self):
+        """Response has required keys."""
+        result = get_revenue_trends()
+        assert "tool_used" in result
+        assert "summary" in result
+        assert "data" in result
+        assert "total_revenue" in result
+        assert "best_month" in result
+        assert "worst_month" in result
+        assert "avg_monthly_revenue" in result
+        assert "overall_trend" in result
+        assert "metadata" in result
+
+    def test_data_is_list(self):
+        """data field is a list of monthly data."""
+        result = get_revenue_trends()
+        assert isinstance(result["data"], list)
+        assert len(result["data"]) > 0
+
+    def test_month_has_required_fields(self):
+        """Each month has required fields."""
+        result = get_revenue_trends()
+        for item in result["data"]:
+            assert "month" in item
+            assert "revenue" in item
+            assert "transaction_count" in item
+            assert "unique_customers" in item
+            assert "avg_transaction_value" in item
+
+    def test_months_sorted_chronologically(self):
+        """Months are in chronological order."""
+        result = get_revenue_trends()
+        months = [item["month"] for item in result["data"]]
+        assert months == sorted(months)
+
+    def test_total_revenue_equals_sum(self):
+        """total_revenue equals sum of monthly revenues."""
+        result = get_revenue_trends()
+        calculated_total = sum(item["revenue"] for item in result["data"])
+        assert abs(calculated_total - result["total_revenue"]) < 0.01
+
+    def test_best_month_has_highest_revenue(self):
+        """best_month has the highest revenue."""
+        result = get_revenue_trends()
+        best_month = result["best_month"]
+        best_revenue = max(item["revenue"] for item in result["data"])
+        best_month_data = next(item for item in result["data"] if item["month"] == best_month)
+        assert best_month_data["revenue"] == best_revenue
+
+    def test_worst_month_has_lowest_revenue(self):
+        """worst_month has the lowest revenue."""
+        result = get_revenue_trends()
+        worst_month = result["worst_month"]
+        worst_revenue = min(item["revenue"] for item in result["data"])
+        worst_month_data = next(item for item in result["data"] if item["month"] == worst_month)
+        assert worst_month_data["revenue"] == worst_revenue
+
+    def test_avg_monthly_revenue_calculation(self):
+        """avg_monthly_revenue is calculated correctly."""
+        result = get_revenue_trends()
+        expected_avg = result["total_revenue"] / len(result["data"])
+        assert abs(result["avg_monthly_revenue"] - expected_avg) < 0.01
+
+    def test_trend_is_valid(self):
+        """overall_trend is one of growing, declining, stable."""
+        result = get_revenue_trends()
+        assert result["overall_trend"] in {"growing", "declining", "stable"}
+
+    def test_category_filter(self):
+        """Category filter applies correctly."""
+        result = get_revenue_trends(category="electronics")
+        assert result["metadata"]["filters_applied"]["category"] == "electronics"
+
+    def test_invalid_category_returns_error(self):
+        """Invalid category returns structured error."""
+        result = get_revenue_trends(category="invalid")
+        assert result["ok"] == False
+        assert result["error_type"] == "invalid_input"
+
+    def test_all_revenues_positive(self):
+        """All revenue values are positive."""
+        result = get_revenue_trends()
+        for item in result["data"]:
+            assert item["revenue"] > 0
+            assert item["transaction_count"] > 0

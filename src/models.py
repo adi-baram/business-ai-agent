@@ -200,3 +200,75 @@ class AgentCapabilities(BaseToolResponse):
 
     data: list[ToolCapability]
     total_tools: int
+
+
+# === Payment Method Analysis ===
+
+
+class PaymentMethodMetrics(BaseModel):
+    """Metrics for a single payment method."""
+
+    payment_method: str
+    total_revenue: float
+    transaction_count: int
+    avg_transaction_value: float
+    percentage_of_transactions: float
+    return_rate_percent: float
+
+
+class PaymentMethodAnalysis(BaseToolResponse):
+    """Response for get_payment_method_analysis tool."""
+
+    data: list[PaymentMethodMetrics]
+    total_revenue: float
+    most_popular_method: str
+    highest_avg_value_method: str
+
+
+# === Segment Comparison ===
+
+
+class SegmentMetrics(BaseModel):
+    """Performance metrics for a customer segment."""
+
+    segment: str
+    total_revenue: float
+    customer_count: int
+    transaction_count: int
+    avg_transaction_value: float
+    avg_transactions_per_customer: float
+    return_rate_percent: float
+    percentage_of_revenue: float
+
+
+class SegmentComparison(BaseToolResponse):
+    """Response for get_segment_comparison tool."""
+
+    data: list[SegmentMetrics]
+    top_segment_by_revenue: str
+    top_segment_by_avg_value: str
+    total_customers: int
+
+
+# === Revenue Trends ===
+
+
+class MonthlyRevenue(BaseModel):
+    """Revenue metrics for a single month."""
+
+    month: str  # YYYY-MM format
+    revenue: float
+    transaction_count: int
+    unique_customers: int
+    avg_transaction_value: float
+
+
+class RevenueTrends(BaseToolResponse):
+    """Response for get_revenue_trends tool."""
+
+    data: list[MonthlyRevenue]
+    total_revenue: float
+    best_month: str
+    worst_month: str
+    avg_monthly_revenue: float
+    overall_trend: str  # "growing", "declining", "stable"

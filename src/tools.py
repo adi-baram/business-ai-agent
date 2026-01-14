@@ -33,12 +33,18 @@ from .models import (
     CustomerLTV,
     DataOverview,
     ErrorResponse,
+    MonthlyRevenue,
     MonthOverMonth,
+    PaymentMethodAnalysis,
+    PaymentMethodMetrics,
     PeriodMetrics,
     RegionalComparison,
     RegionMetrics,
     ReturnRateByCategory,
     RevenueByCategory,
+    RevenueTrends,
+    SegmentComparison,
+    SegmentMetrics,
     ToolCapability,
     ToolMetadata,
 )
@@ -730,6 +736,439 @@ def get_data_overview() -> dict:
 
 
 @tool
+def get_payment_method_analysis(
+    category: Optional[str] = None,
+    region: Optional[str] = None,
+) -> dict:
+    """
+    Analyze transaction patterns by payment method.
+
+    This tool breaks down revenue, transaction count, and average values
+    by payment method (credit card, debit card, PayPal, Apple Pay).
+    Useful for understanding customer payment preferences and optimizing
+    payment processing.
+
+    Args:
+        category: Optional filter by product category.
+                 Valid values: electronics, clothing, home, grocery, sports.
+        region: Optional filter by customer region.
+               Valid values: north, south, east, west.
+
+    Returns:
+        dict: Structured response with:
+            - data: List of payment methods with metrics
+            - total_revenue: Total revenue across all payment methods
+            - most_popular_method: Payment method with most transactions
+            - highest_avg_value_method: Payment method with highest average order
+            - summary: Human-readable interpretation
+
+    Example questions this tool answers:
+        - "What payment methods do customers prefer?"
+        - "Which payment method has the highest average order value?"
+        - "What's the return rate by payment method?"
+        - "How does credit card compare to PayPal?"
+    """
+    dm = get_data_manager()
+
+    # Validate inputs
+    if category and category not in VALID_CATEGORIES:
+        return ErrorResponse(
+            error_type="invalid_input",
+            message=f"Invalid category: {category}",
+            suggestions=[f"Valid categories are: {sorted(VALID_CATEGORIES)}"],
+        ).model_dump()
+
+    if region and region not in VALID_REGIONS:
+        return ErrorResponse(
+            error_type="invalid_input",
+            message=f"Invalid region: {region}",
+            suggestions=[f"Valid regions are: {sorted(VALID_REGIONS)}"],
+        ).model_dump()
+
+    # Get data
+    df = dm.get_merged_data()
+
+    # Apply filters
+    filters_applied: dict = {}
+    if category:
+        df = df[df["category"] == category]
+        filters_applied["category"] = category
+    if region:
+        df = df[df["region"] == region]
+        filters_applied["region"] = region
+
+    if df.empty:
+        return ErrorResponse(
+            error_type="no_data",
+            message="No transactions found matching the specified filters.",
+            suggestions=["Try removing filters"],
+        ).model_dump()
+
+    # Calculate metrics by payment method
+    # For revenue, exclude returns
+    df_valid = df[df["is_returned"] == False]
+
+    payment_stats = (
+        df.groupby("payment_method")
+        .agg(
+            transaction_count=("transaction_id", "count"),
+            returned_count=("is_returned", "sum"),
+        )
+        .reset_index()
+    )
+
+    # Revenue from non-returned transactions
+    revenue_by_method = (
+        df_valid.groupby("payment_method")["amount"]
+        .agg(["sum", "mean"])
+        .reset_index()
+    )
+    revenue_by_method.columns = ["payment_method", "total_revenue", "avg_transaction_value"]
+
+    payment_stats = payment_stats.merge(revenue_by_method, on="payment_method", how="left")
+    payment_stats["total_revenue"] = payment_stats["total_revenue"].fillna(0)
+    payment_stats["avg_transaction_value"] = payment_stats["avg_transaction_value"].fillna(0)
+
+    # Calculate percentages and return rates
+    total_transactions = payment_stats["transaction_count"].sum()
+    total_revenue = payment_stats["total_revenue"].sum()
+
+    payment_stats["percentage_of_transactions"] = (
+        100 * payment_stats["transaction_count"] / total_transactions
+    )
+    payment_stats["return_rate_percent"] = (
+        100 * payment_stats["returned_count"] / payment_stats["transaction_count"]
+    )
+
+    # Sort by transaction count (most popular first)
+    payment_stats = payment_stats.sort_values("transaction_count", ascending=False)
+
+    # Build response data
+    payment_data = []
+    for _, row in payment_stats.iterrows():
+        payment_data.append(
+            PaymentMethodMetrics(
+                payment_method=row["payment_method"],
+                total_revenue=round(row["total_revenue"], 2),
+                transaction_count=int(row["transaction_count"]),
+                avg_transaction_value=round(row["avg_transaction_value"], 2),
+                percentage_of_transactions=round(row["percentage_of_transactions"], 1),
+                return_rate_percent=round(row["return_rate_percent"], 1),
+            )
+        )
+
+    most_popular = payment_data[0].payment_method if payment_data else "N/A"
+    highest_avg = max(payment_data, key=lambda x: x.avg_transaction_value).payment_method if payment_data else "N/A"
+
+    response = PaymentMethodAnalysis(
+        tool_used="get_payment_method_analysis",
+        summary=(
+            f"Most popular payment method is {most_popular.replace('_', ' ')} "
+            f"with {payment_data[0].percentage_of_transactions}% of transactions. "
+            f"Highest average order value: {highest_avg.replace('_', ' ')} "
+            f"(${max(p.avg_transaction_value for p in payment_data):,.2f}). "
+            f"Total revenue: ${total_revenue:,.2f}."
+        ),
+        data=payment_data,
+        total_revenue=round(total_revenue, 2),
+        most_popular_method=most_popular,
+        highest_avg_value_method=highest_avg,
+        metadata=ToolMetadata(
+            date_range_start=dm.data_start.strftime("%Y-%m-%d"),
+            date_range_end=dm.data_end.strftime("%Y-%m-%d"),
+            filters_applied=filters_applied,
+            record_count=int(total_transactions),
+            data_as_of=dm.data_end.strftime("%Y-%m-%d"),
+        ),
+    )
+
+    return response.model_dump()
+
+
+@tool
+def get_segment_comparison(
+    region: Optional[str] = None,
+) -> dict:
+    """
+    Compare performance across customer segments (new, regular, VIP).
+
+    This tool analyzes how different customer segments perform in terms
+    of revenue, transaction frequency, and return rates. Useful for
+    customer strategy and loyalty program decisions.
+
+    Args:
+        region: Optional filter by customer region.
+               Valid values: north, south, east, west.
+
+    Returns:
+        dict: Structured response with:
+            - data: List of segments with performance metrics
+            - top_segment_by_revenue: Segment generating most revenue
+            - top_segment_by_avg_value: Segment with highest average transaction
+            - total_customers: Total customers analyzed
+            - summary: Human-readable interpretation
+
+    Example questions this tool answers:
+        - "How do VIP customers compare to regular customers?"
+        - "Which customer segment spends the most?"
+        - "What's the return rate by customer segment?"
+        - "Are new customers performing well?"
+    """
+    dm = get_data_manager()
+
+    # Validate input
+    if region and region not in VALID_REGIONS:
+        return ErrorResponse(
+            error_type="invalid_input",
+            message=f"Invalid region: {region}",
+            suggestions=[f"Valid regions are: {sorted(VALID_REGIONS)}"],
+        ).model_dump()
+
+    # Get merged data
+    df = dm.get_merged_data()
+
+    # Apply filters
+    filters_applied: dict = {}
+    if region:
+        df = df[df["region"] == region]
+        filters_applied["region"] = region
+
+    if df.empty:
+        return ErrorResponse(
+            error_type="no_data",
+            message="No data found matching the specified filters.",
+            suggestions=["Try removing filters"],
+        ).model_dump()
+
+    # Calculate metrics by segment
+    df_valid = df[df["is_returned"] == False]
+
+    segment_stats = (
+        df.groupby("customer_segment")
+        .agg(
+            transaction_count=("transaction_id", "count"),
+            customer_count=("customer_id", "nunique"),
+            returned_count=("is_returned", "sum"),
+        )
+        .reset_index()
+    )
+
+    # Revenue from non-returned transactions
+    revenue_by_segment = (
+        df_valid.groupby("customer_segment")["amount"]
+        .agg(["sum", "mean"])
+        .reset_index()
+    )
+    revenue_by_segment.columns = ["customer_segment", "total_revenue", "avg_transaction_value"]
+
+    segment_stats = segment_stats.merge(revenue_by_segment, on="customer_segment", how="left")
+    segment_stats["total_revenue"] = segment_stats["total_revenue"].fillna(0)
+    segment_stats["avg_transaction_value"] = segment_stats["avg_transaction_value"].fillna(0)
+
+    # Calculate derived metrics
+    total_revenue = segment_stats["total_revenue"].sum()
+    total_customers = segment_stats["customer_count"].sum()
+
+    segment_stats["avg_transactions_per_customer"] = (
+        segment_stats["transaction_count"] / segment_stats["customer_count"]
+    )
+    segment_stats["return_rate_percent"] = (
+        100 * segment_stats["returned_count"] / segment_stats["transaction_count"]
+    )
+    segment_stats["percentage_of_revenue"] = (
+        100 * segment_stats["total_revenue"] / total_revenue
+    )
+
+    # Sort by revenue descending
+    segment_stats = segment_stats.sort_values("total_revenue", ascending=False)
+
+    # Build response data
+    segment_data = []
+    for _, row in segment_stats.iterrows():
+        segment_data.append(
+            SegmentMetrics(
+                segment=row["customer_segment"],
+                total_revenue=round(row["total_revenue"], 2),
+                customer_count=int(row["customer_count"]),
+                transaction_count=int(row["transaction_count"]),
+                avg_transaction_value=round(row["avg_transaction_value"], 2),
+                avg_transactions_per_customer=round(row["avg_transactions_per_customer"], 1),
+                return_rate_percent=round(row["return_rate_percent"], 1),
+                percentage_of_revenue=round(row["percentage_of_revenue"], 1),
+            )
+        )
+
+    top_by_revenue = segment_data[0].segment if segment_data else "N/A"
+    top_by_avg = max(segment_data, key=lambda x: x.avg_transaction_value).segment if segment_data else "N/A"
+
+    response = SegmentComparison(
+        tool_used="get_segment_comparison",
+        summary=(
+            f"{top_by_revenue.upper()} customers lead in total revenue with "
+            f"${segment_data[0].total_revenue:,.2f} ({segment_data[0].percentage_of_revenue}% of total). "
+            f"{top_by_avg.upper()} segment has highest average transaction "
+            f"(${max(s.avg_transaction_value for s in segment_data):,.2f}). "
+            f"Total customers: {total_customers}."
+        ),
+        data=segment_data,
+        top_segment_by_revenue=top_by_revenue,
+        top_segment_by_avg_value=top_by_avg,
+        total_customers=int(total_customers),
+        metadata=ToolMetadata(
+            date_range_start=dm.data_start.strftime("%Y-%m-%d"),
+            date_range_end=dm.data_end.strftime("%Y-%m-%d"),
+            filters_applied=filters_applied,
+            record_count=len(df),
+            data_as_of=dm.data_end.strftime("%Y-%m-%d"),
+        ),
+    )
+
+    return response.model_dump()
+
+
+@tool
+def get_revenue_trends(
+    category: Optional[str] = None,
+) -> dict:
+    """
+    Show monthly revenue trends over the dataset period.
+
+    This tool provides a time-series view of revenue, helping identify
+    seasonal patterns, growth trends, and performance anomalies.
+    Data is aggregated by calendar month.
+
+    Args:
+        category: Optional filter by product category.
+                 Valid values: electronics, clothing, home, grocery, sports.
+
+    Returns:
+        dict: Structured response with:
+            - data: List of monthly metrics (chronological order)
+            - total_revenue: Sum of all months
+            - best_month: Highest revenue month
+            - worst_month: Lowest revenue month
+            - avg_monthly_revenue: Average monthly revenue
+            - overall_trend: "growing", "declining", or "stable"
+            - summary: Human-readable interpretation
+
+    Example questions this tool answers:
+        - "What's our revenue trend over time?"
+        - "Which month had the highest sales?"
+        - "Show me monthly revenue for the year"
+        - "Are we growing or declining overall?"
+    """
+    dm = get_data_manager()
+
+    # Validate input
+    if category and category not in VALID_CATEGORIES:
+        return ErrorResponse(
+            error_type="invalid_input",
+            message=f"Invalid category: {category}",
+            suggestions=[f"Valid categories are: {sorted(VALID_CATEGORIES)}"],
+        ).model_dump()
+
+    # Get transactions (exclude returns for revenue)
+    df = dm.transactions
+    df = df[df["is_returned"] == False].copy()
+
+    # Apply category filter
+    filters_applied: dict = {}
+    if category:
+        df = df[df["category"] == category]
+        filters_applied["category"] = category
+
+    if df.empty:
+        return ErrorResponse(
+            error_type="no_data",
+            message="No transactions found matching the specified filters.",
+            suggestions=["Try removing filters"],
+        ).model_dump()
+
+    # Add month column for grouping
+    df["month"] = df["transaction_date"].dt.to_period("M")
+
+    # Aggregate by month
+    monthly_stats = (
+        df.groupby("month")
+        .agg(
+            revenue=("amount", "sum"),
+            transaction_count=("transaction_id", "count"),
+            unique_customers=("customer_id", "nunique"),
+        )
+        .reset_index()
+    )
+
+    monthly_stats["avg_transaction_value"] = (
+        monthly_stats["revenue"] / monthly_stats["transaction_count"]
+    )
+
+    # Sort chronologically
+    monthly_stats = monthly_stats.sort_values("month")
+
+    # Build response data
+    monthly_data = []
+    for _, row in monthly_stats.iterrows():
+        monthly_data.append(
+            MonthlyRevenue(
+                month=str(row["month"]),
+                revenue=round(row["revenue"], 2),
+                transaction_count=int(row["transaction_count"]),
+                unique_customers=int(row["unique_customers"]),
+                avg_transaction_value=round(row["avg_transaction_value"], 2),
+            )
+        )
+
+    # Calculate summary metrics
+    total_revenue = sum(m.revenue for m in monthly_data)
+    avg_monthly = total_revenue / len(monthly_data) if monthly_data else 0
+
+    best_month = max(monthly_data, key=lambda x: x.revenue).month if monthly_data else "N/A"
+    worst_month = min(monthly_data, key=lambda x: x.revenue).month if monthly_data else "N/A"
+
+    # Determine overall trend (compare first half to second half)
+    if len(monthly_data) >= 4:
+        mid = len(monthly_data) // 2
+        first_half_avg = sum(m.revenue for m in monthly_data[:mid]) / mid
+        second_half_avg = sum(m.revenue for m in monthly_data[mid:]) / (len(monthly_data) - mid)
+
+        change_percent = 100 * (second_half_avg - first_half_avg) / first_half_avg if first_half_avg > 0 else 0
+
+        if change_percent > 10:
+            trend = "growing"
+        elif change_percent < -10:
+            trend = "declining"
+        else:
+            trend = "stable"
+    else:
+        trend = "stable"  # Not enough data to determine trend
+
+    response = RevenueTrends(
+        tool_used="get_revenue_trends",
+        summary=(
+            f"Revenue trend over {len(monthly_data)} months. "
+            f"Total: ${total_revenue:,.2f}, Average: ${avg_monthly:,.2f}/month. "
+            f"Best month: {best_month} (${max(m.revenue for m in monthly_data):,.2f}). "
+            f"Overall trend: {trend}."
+        ),
+        data=monthly_data,
+        total_revenue=round(total_revenue, 2),
+        best_month=best_month,
+        worst_month=worst_month,
+        avg_monthly_revenue=round(avg_monthly, 2),
+        overall_trend=trend,
+        metadata=ToolMetadata(
+            date_range_start=dm.data_start.strftime("%Y-%m-%d"),
+            date_range_end=dm.data_end.strftime("%Y-%m-%d"),
+            filters_applied=filters_applied,
+            record_count=len(df),
+            data_as_of=dm.data_end.strftime("%Y-%m-%d"),
+        ),
+    )
+
+    return response.model_dump()
+
+
+@tool
 def explain_capabilities() -> dict:
     """
     List all available analytics tools and what questions they can answer.
@@ -810,6 +1249,36 @@ def explain_capabilities() -> dict:
             parameters=[],
         ),
         ToolCapability(
+            tool_name="get_payment_method_analysis",
+            description="Analyze transaction patterns by payment method",
+            example_questions=[
+                "What payment methods do customers prefer?",
+                "Which payment method has the highest average order value?",
+                "What's the return rate by payment method?",
+            ],
+            parameters=["category", "region"],
+        ),
+        ToolCapability(
+            tool_name="get_segment_comparison",
+            description="Compare performance across customer segments (new, regular, VIP)",
+            example_questions=[
+                "How do VIP customers compare to regular customers?",
+                "Which customer segment spends the most?",
+                "What's the return rate by customer segment?",
+            ],
+            parameters=["region"],
+        ),
+        ToolCapability(
+            tool_name="get_revenue_trends",
+            description="Show monthly revenue trends over the dataset period",
+            example_questions=[
+                "What's our revenue trend over time?",
+                "Which month had the highest sales?",
+                "Are we growing or declining overall?",
+            ],
+            parameters=["category"],
+        ),
+        ToolCapability(
             tool_name="explain_capabilities",
             description="List all available analytics tools and example questions",
             example_questions=[
@@ -825,7 +1294,8 @@ def explain_capabilities() -> dict:
         summary=(
             f"I have {len(capabilities)} analytics tools available: "
             "revenue by category, customer lifetime value, return rates, "
-            "regional comparison, and month-over-month analysis."
+            "regional comparison, month-over-month analysis, payment method analysis, "
+            "customer segment comparison, and revenue trends."
         ),
         data=capabilities,
         total_tools=len(capabilities),

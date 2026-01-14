@@ -2,13 +2,16 @@
 """
 Demonstration script for the business analytics agent.
 
-Runs 6 queries showcasing all available tools:
+Runs 9 queries showcasing all available tools:
 1. Data overview
 2. Revenue by category
 3. Customer lifetime value
 4. Return rates
 5. Regional comparison
 6. Month-over-month performance
+7. Payment method analysis
+8. Customer segment comparison
+9. Revenue trends
 
 Usage:
     python demo.py
@@ -51,6 +54,18 @@ DEMO_QUESTIONS = [
     {
         "question": "How is this month performing compared to last month?",
         "description": "Month-over-Month",
+    },
+    {
+        "question": "What payment methods do customers prefer?",
+        "description": "Payment Method Analysis",
+    },
+    {
+        "question": "How do VIP customers compare to regular and new customers?",
+        "description": "Customer Segment Comparison",
+    },
+    {
+        "question": "What's our revenue trend over the past year?",
+        "description": "Revenue Trends",
     },
 ]
 

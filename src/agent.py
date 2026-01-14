@@ -26,8 +26,11 @@ from .tools import (
     get_customer_ltv,
     get_data_overview,
     get_month_over_month,
+    get_payment_method_analysis,
     get_return_rates,
     get_revenue_by_category,
+    get_revenue_trends,
+    get_segment_comparison,
 )
 
 SYSTEM_PROMPT = """You are a business analytics assistant for an e-commerce company.
@@ -106,6 +109,9 @@ def create_agent() -> Agent:
             compare_regions,
             get_month_over_month,
             get_data_overview,
+            get_payment_method_analysis,
+            get_segment_comparison,
+            get_revenue_trends,
             explain_capabilities,
         ],
     )
