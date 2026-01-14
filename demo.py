@@ -2,9 +2,13 @@
 """
 Demonstration script for the business analytics agent.
 
-Runs 2-3 representative queries showcasing:
-1. Basic aggregation (revenue by category)
-2. Agent capabilities explanation
+Runs 6 queries showcasing all available tools:
+1. Data overview
+2. Revenue by category
+3. Customer lifetime value
+4. Return rates
+5. Regional comparison
+6. Month-over-month performance
 
 Usage:
     python demo.py
@@ -25,12 +29,28 @@ console = Console()
 
 DEMO_QUESTIONS = [
     {
-        "question": "What is our total revenue by category?",
-        "description": "Basic aggregation - shows revenue breakdown across product categories",
+        "question": "What data do we have available? What's the date range and how many records?",
+        "description": "Data Overview",
     },
     {
-        "question": "What can you help me analyze?",
-        "description": "Capabilities - shows what analyses are available",
+        "question": "What is our total revenue by category?",
+        "description": "Revenue by Category",
+    },
+    {
+        "question": "Which customers have the highest lifetime value?",
+        "description": "Customer Lifetime Value",
+    },
+    {
+        "question": "What's the return rate by product category?",
+        "description": "Return Rates",
+    },
+    {
+        "question": "Compare performance across regions",
+        "description": "Regional Comparison",
+    },
+    {
+        "question": "How is this month performing compared to last month?",
+        "description": "Month-over-Month",
     },
 ]
 
@@ -101,7 +121,7 @@ def run_demo():
         try:
             response = agent(item["question"])
             console.print("[yellow]Response:[/yellow]")
-            console.print(response)
+            console.print(str(response))
         except Exception as e:
             console.print(f"[red]Error:[/red] {e}")
 

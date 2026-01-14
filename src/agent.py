@@ -16,10 +16,19 @@ from __future__ import annotations
 from typing import Optional
 
 from strands import Agent
+from strands.handlers.callback_handler import null_callback_handler
 from strands.models.openai import OpenAIModel
 
 from .config import get_settings
-from .tools import explain_capabilities, get_revenue_by_category
+from .tools import (
+    compare_regions,
+    explain_capabilities,
+    get_customer_ltv,
+    get_data_overview,
+    get_month_over_month,
+    get_return_rates,
+    get_revenue_by_category,
+)
 
 SYSTEM_PROMPT = """You are a business analytics assistant for an e-commerce company.
 
@@ -34,7 +43,11 @@ When responding:
 
 Available analyses:
 - Revenue by category (with optional date and category filters)
-- Agent capabilities explanation
+- Customer lifetime value (top customers by spending)
+- Return rates by product category
+- Regional performance comparison
+- Month-over-month performance trends
+- Data overview (date range, record counts, available dimensions)
 
 IMPORTANT RULES:
 - If a question cannot be answered with available tools, use explain_capabilities to show what analyses are possible
@@ -81,11 +94,18 @@ def create_agent() -> Agent:
     )
 
     # Create agent with all tools
+    # Use null_callback_handler to suppress streaming output
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
+        callback_handler=null_callback_handler,
         tools=[
             get_revenue_by_category,
+            get_customer_ltv,
+            get_return_rates,
+            compare_regions,
+            get_month_over_month,
+            get_data_overview,
             explain_capabilities,
         ],
     )

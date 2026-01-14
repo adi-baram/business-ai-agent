@@ -18,12 +18,26 @@ from typing import Optional
 import pandas as pd
 from strands import tool
 
-from .config import VALID_CATEGORIES
+from .config import (
+    VALID_CATEGORIES,
+    VALID_PAYMENT_METHODS,
+    VALID_REGIONS,
+    VALID_SEGMENTS,
+)
 from .data_loader import get_data_manager
 from .models import (
     AgentCapabilities,
+    CategoryReturnRate,
     CategoryRevenue,
+    CustomerLifetimeValue,
+    CustomerLTV,
+    DataOverview,
     ErrorResponse,
+    MonthOverMonth,
+    PeriodMetrics,
+    RegionalComparison,
+    RegionMetrics,
+    ReturnRateByCategory,
     RevenueByCategory,
     ToolCapability,
     ToolMetadata,
@@ -179,6 +193,543 @@ def get_revenue_by_category(
 
 
 @tool
+def get_customer_ltv(
+    top_n: int = 10,
+    region: Optional[str] = None,
+    segment: Optional[str] = None,
+) -> dict:
+    """
+    Get top customers ranked by lifetime value (total spending).
+
+    This tool identifies the most valuable customers based on their total
+    transaction amount. Useful for loyalty programs, targeted marketing,
+    and customer segmentation analysis.
+
+    Args:
+        top_n: Number of top customers to return (default: 10, max: 50).
+        region: Optional filter by customer region.
+               Valid values: north, south, east, west.
+        segment: Optional filter by customer segment.
+                Valid values: new, regular, vip.
+
+    Returns:
+        dict: Structured response with:
+            - data: List of top customers with LTV metrics
+            - average_ltv: Average lifetime value across analyzed customers
+            - total_customers_analyzed: Number of customers in the analysis
+            - summary: Human-readable interpretation
+
+    Example questions this tool answers:
+        - "Which customers have the highest lifetime value?"
+        - "Who are our top 5 VIP customers?"
+        - "Show me the best customers in the north region"
+    """
+    dm = get_data_manager()
+
+    # Validate inputs
+    if top_n < 1 or top_n > 50:
+        return ErrorResponse(
+            error_type="invalid_input",
+            message=f"top_n must be between 1 and 50, got {top_n}",
+            suggestions=["Use a value like 10 or 20"],
+        ).model_dump()
+
+    if region and region not in VALID_REGIONS:
+        return ErrorResponse(
+            error_type="invalid_input",
+            message=f"Invalid region: {region}",
+            suggestions=[f"Valid regions are: {sorted(VALID_REGIONS)}"],
+        ).model_dump()
+
+    if segment and segment not in VALID_SEGMENTS:
+        return ErrorResponse(
+            error_type="invalid_input",
+            message=f"Invalid segment: {segment}",
+            suggestions=[f"Valid segments are: {sorted(VALID_SEGMENTS)}"],
+        ).model_dump()
+
+    # Get merged data (transactions + customers)
+    df = dm.get_merged_data()
+
+    # Exclude returns from LTV calculation
+    df = df[df["is_returned"] == False].copy()
+
+    # Apply filters
+    filters_applied: dict = {}
+    if region:
+        df = df[df["region"] == region]
+        filters_applied["region"] = region
+    if segment:
+        df = df[df["customer_segment"] == segment]
+        filters_applied["segment"] = segment
+
+    if df.empty:
+        return ErrorResponse(
+            error_type="no_data",
+            message="No customers found matching the specified filters.",
+            suggestions=["Try removing filters", "Check region/segment spelling"],
+        ).model_dump()
+
+    # Aggregate by customer
+    customer_agg = (
+        df.groupby(["customer_id", "region", "customer_segment"])
+        .agg(
+            total_spent=("amount", "sum"),
+            transaction_count=("transaction_id", "count"),
+        )
+        .reset_index()
+    )
+
+    customer_agg["avg_transaction_value"] = (
+        customer_agg["total_spent"] / customer_agg["transaction_count"]
+    )
+
+    # Sort and rank
+    customer_agg = customer_agg.sort_values("total_spent", ascending=False)
+    customer_agg["rank"] = range(1, len(customer_agg) + 1)
+
+    # Get top N
+    top_customers = customer_agg.head(top_n)
+
+    # Build response data
+    customer_data = []
+    for _, row in top_customers.iterrows():
+        customer_data.append(
+            CustomerLTV(
+                customer_id=row["customer_id"],
+                total_spent=round(row["total_spent"], 2),
+                transaction_count=int(row["transaction_count"]),
+                avg_transaction_value=round(row["avg_transaction_value"], 2),
+                region=row["region"],
+                segment=row["customer_segment"],
+                rank=int(row["rank"]),
+            )
+        )
+
+    average_ltv = customer_agg["total_spent"].mean()
+    total_customers = len(customer_agg)
+
+    response = CustomerLifetimeValue(
+        tool_used="get_customer_ltv",
+        summary=(
+            f"Top {len(customer_data)} customers by lifetime value. "
+            f"#1 is {customer_data[0].customer_id} with ${customer_data[0].total_spent:,.2f} "
+            f"from {customer_data[0].transaction_count} transactions. "
+            f"Average LTV across {total_customers} customers is ${average_ltv:,.2f}."
+        ),
+        data=customer_data,
+        average_ltv=round(average_ltv, 2),
+        total_customers_analyzed=total_customers,
+        metadata=ToolMetadata(
+            date_range_start=dm.data_start.strftime("%Y-%m-%d"),
+            date_range_end=dm.data_end.strftime("%Y-%m-%d"),
+            filters_applied=filters_applied,
+            record_count=len(top_customers),
+            data_as_of=dm.data_end.strftime("%Y-%m-%d"),
+        ),
+    )
+
+    return response.model_dump()
+
+
+@tool
+def get_return_rates(
+    category: Optional[str] = None,
+) -> dict:
+    """
+    Calculate return rates by product category.
+
+    This tool analyzes the percentage of transactions that were returned
+    for each product category, helping identify quality or satisfaction issues.
+
+    Args:
+        category: Optional filter to analyze a specific category.
+                 Valid values: electronics, clothing, home, grocery, sports.
+                 If not provided, shows all categories.
+
+    Returns:
+        dict: Structured response with:
+            - data: List of categories with return rate metrics
+            - overall_return_rate: Return rate across all transactions
+            - highest_return_category: Category with highest return rate
+            - total_revenue_lost: Total revenue lost to returns
+            - summary: Human-readable interpretation
+
+    Example questions this tool answers:
+        - "What's the return rate by product category?"
+        - "Which category has the most returns?"
+        - "How much revenue are we losing to returns?"
+    """
+    dm = get_data_manager()
+
+    # Validate input
+    if category and category not in VALID_CATEGORIES:
+        return ErrorResponse(
+            error_type="invalid_input",
+            message=f"Invalid category: {category}",
+            suggestions=[f"Valid categories are: {sorted(VALID_CATEGORIES)}"],
+        ).model_dump()
+
+    df = dm.transactions
+
+    # Apply category filter
+    filters_applied: dict = {}
+    if category:
+        df = df[df["category"] == category]
+        filters_applied["category"] = category
+
+    if df.empty:
+        return ErrorResponse(
+            error_type="no_data",
+            message="No transactions found.",
+            suggestions=["Check category spelling"],
+        ).model_dump()
+
+    # Calculate return rates by category
+    category_stats = (
+        df.groupby("category")
+        .agg(
+            total_transactions=("transaction_id", "count"),
+            returned_count=("is_returned", "sum"),
+            total_amount=("amount", "sum"),
+        )
+        .reset_index()
+    )
+
+    # Calculate returned revenue per category
+    returned_revenue = (
+        df[df["is_returned"] == True]
+        .groupby("category")["amount"]
+        .sum()
+        .reset_index()
+    )
+    returned_revenue.columns = ["category", "revenue_lost"]
+
+    category_stats = category_stats.merge(returned_revenue, on="category", how="left")
+    category_stats["revenue_lost"] = category_stats["revenue_lost"].fillna(0)
+
+    category_stats["return_rate_percent"] = (
+        100 * category_stats["returned_count"] / category_stats["total_transactions"]
+    )
+
+    # Sort by return rate descending
+    category_stats = category_stats.sort_values("return_rate_percent", ascending=False)
+
+    # Build response data
+    category_data = []
+    for _, row in category_stats.iterrows():
+        category_data.append(
+            CategoryReturnRate(
+                category=row["category"],
+                total_transactions=int(row["total_transactions"]),
+                returned_count=int(row["returned_count"]),
+                return_rate_percent=round(row["return_rate_percent"], 1),
+                revenue_lost_to_returns=round(row["revenue_lost"], 2),
+            )
+        )
+
+    # Overall metrics
+    total_txn = df["transaction_id"].count()
+    total_returned = df["is_returned"].sum()
+    overall_return_rate = 100 * total_returned / total_txn if total_txn > 0 else 0
+    total_revenue_lost = df[df["is_returned"] == True]["amount"].sum()
+
+    highest_return_category = category_data[0].category if category_data else "N/A"
+
+    response = ReturnRateByCategory(
+        tool_used="get_return_rates",
+        summary=(
+            f"Overall return rate is {overall_return_rate:.1f}%. "
+            f"{highest_return_category.title()} has the highest return rate "
+            f"at {category_data[0].return_rate_percent}%. "
+            f"Total revenue lost to returns: ${total_revenue_lost:,.2f}."
+        ),
+        data=category_data,
+        overall_return_rate=round(overall_return_rate, 1),
+        highest_return_category=highest_return_category,
+        total_revenue_lost=round(total_revenue_lost, 2),
+        metadata=ToolMetadata(
+            date_range_start=dm.data_start.strftime("%Y-%m-%d"),
+            date_range_end=dm.data_end.strftime("%Y-%m-%d"),
+            filters_applied=filters_applied,
+            record_count=int(total_txn),
+            data_as_of=dm.data_end.strftime("%Y-%m-%d"),
+        ),
+    )
+
+    return response.model_dump()
+
+
+@tool
+def compare_regions() -> dict:
+    """
+    Compare business performance across geographic regions.
+
+    This tool provides a comprehensive comparison of all regions,
+    including revenue, customer count, transaction volume, and return rates.
+    Useful for resource allocation and regional strategy decisions.
+
+    Returns:
+        dict: Structured response with:
+            - data: List of regions with performance metrics
+            - top_region_by_revenue: Best performing region by revenue
+            - top_region_by_customers: Region with most customers
+            - summary: Human-readable interpretation
+
+    Example questions this tool answers:
+        - "Compare performance across regions"
+        - "Which region generates the most revenue?"
+        - "How do our regions compare?"
+    """
+    dm = get_data_manager()
+
+    # Get merged data
+    df = dm.get_merged_data()
+
+    # Calculate metrics by region
+    region_stats = (
+        df.groupby("region")
+        .agg(
+            total_revenue=("amount", lambda x: x[df.loc[x.index, "is_returned"] == False].sum()),
+            transaction_count=("transaction_id", "count"),
+            customer_count=("customer_id", "nunique"),
+            returned_count=("is_returned", "sum"),
+        )
+        .reset_index()
+    )
+
+    # Calculate non-returned revenue properly
+    non_returned = df[df["is_returned"] == False].groupby("region")["amount"].sum().reset_index()
+    non_returned.columns = ["region", "total_revenue"]
+
+    region_stats = region_stats.drop(columns=["total_revenue"]).merge(non_returned, on="region")
+
+    region_stats["avg_transaction_value"] = (
+        region_stats["total_revenue"] / (region_stats["transaction_count"] - region_stats["returned_count"])
+    )
+    region_stats["return_rate_percent"] = (
+        100 * region_stats["returned_count"] / region_stats["transaction_count"]
+    )
+
+    # Sort by revenue descending
+    region_stats = region_stats.sort_values("total_revenue", ascending=False)
+
+    # Build response data
+    region_data = []
+    for _, row in region_stats.iterrows():
+        region_data.append(
+            RegionMetrics(
+                region=row["region"],
+                total_revenue=round(row["total_revenue"], 2),
+                customer_count=int(row["customer_count"]),
+                transaction_count=int(row["transaction_count"]),
+                avg_transaction_value=round(row["avg_transaction_value"], 2),
+                return_rate_percent=round(row["return_rate_percent"], 1),
+            )
+        )
+
+    top_by_revenue = region_data[0].region if region_data else "N/A"
+    top_by_customers = max(region_data, key=lambda x: x.customer_count).region if region_data else "N/A"
+
+    response = RegionalComparison(
+        tool_used="compare_regions",
+        summary=(
+            f"{top_by_revenue.title()} leads in revenue with ${region_data[0].total_revenue:,.2f}. "
+            f"{top_by_customers.title()} has the most customers ({max(r.customer_count for r in region_data)}). "
+            f"Lowest return rate: {min(r.region for r in region_data)} "
+            f"({min(r.return_rate_percent for r in region_data)}%)."
+        ),
+        data=region_data,
+        top_region_by_revenue=top_by_revenue,
+        top_region_by_customers=top_by_customers,
+        metadata=ToolMetadata(
+            date_range_start=dm.data_start.strftime("%Y-%m-%d"),
+            date_range_end=dm.data_end.strftime("%Y-%m-%d"),
+            filters_applied={},
+            record_count=len(df),
+            data_as_of=dm.data_end.strftime("%Y-%m-%d"),
+        ),
+    )
+
+    return response.model_dump()
+
+
+@tool
+def get_month_over_month() -> dict:
+    """
+    Compare current month performance to the previous month.
+
+    This tool analyzes revenue, transaction count, and customer metrics
+    for the current month versus the previous month. Time periods are
+    anchored to the dataset's end date, not the system clock.
+
+    Returns:
+        dict: Structured response with:
+            - current_period: Metrics for current month
+            - previous_period: Metrics for previous month
+            - revenue_change_percent: Percentage change in revenue
+            - transaction_change_percent: Percentage change in transactions
+            - trend: "growth", "decline", or "stable"
+            - summary: Human-readable interpretation
+
+    Example questions this tool answers:
+        - "How is this month performing compared to last month?"
+        - "Are we growing or declining?"
+        - "Month over month comparison"
+    """
+    dm = get_data_manager()
+
+    df = dm.transactions
+
+    # Exclude returns from revenue calculations
+    df_valid = df[df["is_returned"] == False].copy()
+
+    # Current month (based on dataset end date, not system time)
+    current_mask = (df_valid["transaction_date"] >= dm.current_month_start) & (
+        df_valid["transaction_date"] <= dm.current_month_end
+    )
+    current_df = df_valid[current_mask]
+
+    # Previous month
+    prev_mask = (df_valid["transaction_date"] >= dm.prev_month_start) & (
+        df_valid["transaction_date"] <= dm.prev_month_end
+    )
+    prev_df = df_valid[prev_mask]
+
+    # Calculate metrics for current period
+    current_revenue = current_df["amount"].sum() if not current_df.empty else 0
+    current_txn_count = len(current_df)
+    current_customers = current_df["customer_id"].nunique() if not current_df.empty else 0
+    current_avg = current_revenue / current_txn_count if current_txn_count > 0 else 0
+
+    # Calculate metrics for previous period
+    prev_revenue = prev_df["amount"].sum() if not prev_df.empty else 0
+    prev_txn_count = len(prev_df)
+    prev_customers = prev_df["customer_id"].nunique() if not prev_df.empty else 0
+    prev_avg = prev_revenue / prev_txn_count if prev_txn_count > 0 else 0
+
+    # Calculate changes
+    if prev_revenue > 0:
+        revenue_change = 100 * (current_revenue - prev_revenue) / prev_revenue
+    else:
+        revenue_change = 100.0 if current_revenue > 0 else 0.0
+
+    if prev_txn_count > 0:
+        txn_change = 100 * (current_txn_count - prev_txn_count) / prev_txn_count
+    else:
+        txn_change = 100.0 if current_txn_count > 0 else 0.0
+
+    # Determine trend
+    if revenue_change > 5:
+        trend = "growth"
+    elif revenue_change < -5:
+        trend = "decline"
+    else:
+        trend = "stable"
+
+    current_period = PeriodMetrics(
+        period_label="current_month",
+        start_date=dm.current_month_start.strftime("%Y-%m-%d"),
+        end_date=dm.current_month_end.strftime("%Y-%m-%d"),
+        revenue=round(current_revenue, 2),
+        transaction_count=current_txn_count,
+        unique_customers=current_customers,
+        avg_transaction_value=round(current_avg, 2),
+    )
+
+    previous_period = PeriodMetrics(
+        period_label="previous_month",
+        start_date=dm.prev_month_start.strftime("%Y-%m-%d"),
+        end_date=dm.prev_month_end.strftime("%Y-%m-%d"),
+        revenue=round(prev_revenue, 2),
+        transaction_count=prev_txn_count,
+        unique_customers=prev_customers,
+        avg_transaction_value=round(prev_avg, 2),
+    )
+
+    # Build summary
+    trend_word = "up" if revenue_change > 0 else "down" if revenue_change < 0 else "flat"
+
+    response = MonthOverMonth(
+        tool_used="get_month_over_month",
+        summary=(
+            f"Revenue is {trend_word} {abs(revenue_change):.1f}% month-over-month. "
+            f"Current month: ${current_revenue:,.2f} ({current_txn_count} transactions). "
+            f"Previous month: ${prev_revenue:,.2f} ({prev_txn_count} transactions). "
+            f"Trend: {trend}."
+        ),
+        current_period=current_period,
+        previous_period=previous_period,
+        revenue_change_percent=round(revenue_change, 1),
+        transaction_change_percent=round(txn_change, 1),
+        trend=trend,
+        metadata=ToolMetadata(
+            date_range_start=dm.prev_month_start.strftime("%Y-%m-%d"),
+            date_range_end=dm.current_month_end.strftime("%Y-%m-%d"),
+            filters_applied={},
+            record_count=current_txn_count + prev_txn_count,
+            data_as_of=dm.data_end.strftime("%Y-%m-%d"),
+        ),
+    )
+
+    return response.model_dump()
+
+
+@tool
+def get_data_overview() -> dict:
+    """
+    Get basic information about the dataset.
+
+    This tool provides an overview of the available data, including
+    date range, record counts, and available dimensions for filtering.
+
+    Returns:
+        dict: Structured response with:
+            - data_start: Earliest transaction date
+            - data_end: Most recent transaction date
+            - transaction_count: Total number of transactions
+            - customer_count: Total number of customers
+            - categories: Available product categories
+            - regions: Available geographic regions
+            - segments: Available customer segments
+            - payment_methods: Available payment methods
+
+    Example questions this tool answers:
+        - "What is the date range of the data?"
+        - "How many transactions are in the dataset?"
+        - "What is the most recent transaction date?"
+        - "What categories are available?"
+    """
+    dm = get_data_manager()
+
+    response = DataOverview(
+        tool_used="get_data_overview",
+        summary=(
+            f"Dataset contains {dm.transaction_count:,} transactions from "
+            f"{dm.customer_count:,} customers, spanning "
+            f"{dm.data_start.strftime('%Y-%m-%d')} to {dm.data_end.strftime('%Y-%m-%d')}."
+        ),
+        data_start=dm.data_start.strftime("%Y-%m-%d"),
+        data_end=dm.data_end.strftime("%Y-%m-%d"),
+        transaction_count=dm.transaction_count,
+        customer_count=dm.customer_count,
+        categories=sorted(VALID_CATEGORIES),
+        regions=sorted(VALID_REGIONS),
+        segments=sorted(VALID_SEGMENTS),
+        payment_methods=sorted(VALID_PAYMENT_METHODS),
+        metadata=ToolMetadata(
+            date_range_start=dm.data_start.strftime("%Y-%m-%d"),
+            date_range_end=dm.data_end.strftime("%Y-%m-%d"),
+            filters_applied={},
+            record_count=dm.transaction_count,
+            data_as_of=dm.data_end.strftime("%Y-%m-%d"),
+        ),
+    )
+
+    return response.model_dump()
+
+
+@tool
 def explain_capabilities() -> dict:
     """
     List all available analytics tools and what questions they can answer.
@@ -208,6 +759,57 @@ def explain_capabilities() -> dict:
             parameters=["start_date", "end_date", "categories"],
         ),
         ToolCapability(
+            tool_name="get_customer_ltv",
+            description="Get top customers ranked by lifetime value (total spending)",
+            example_questions=[
+                "Which customers have the highest lifetime value?",
+                "Who are our top 5 VIP customers?",
+                "Show me the best customers in the north region",
+            ],
+            parameters=["top_n", "region", "segment"],
+        ),
+        ToolCapability(
+            tool_name="get_return_rates",
+            description="Calculate return rates by product category",
+            example_questions=[
+                "What's the return rate by product category?",
+                "Which category has the most returns?",
+                "How much revenue are we losing to returns?",
+            ],
+            parameters=["category"],
+        ),
+        ToolCapability(
+            tool_name="compare_regions",
+            description="Compare business performance across geographic regions",
+            example_questions=[
+                "Compare performance across regions",
+                "Which region generates the most revenue?",
+                "How do our regions compare?",
+            ],
+            parameters=[],
+        ),
+        ToolCapability(
+            tool_name="get_month_over_month",
+            description="Compare current month performance to previous month",
+            example_questions=[
+                "How is this month performing compared to last month?",
+                "Are we growing or declining?",
+                "Month over month comparison",
+            ],
+            parameters=[],
+        ),
+        ToolCapability(
+            tool_name="get_data_overview",
+            description="Get basic dataset information: date range, record counts, available dimensions",
+            example_questions=[
+                "What is the date range of the data?",
+                "How many transactions are there?",
+                "What is the most recent transaction date?",
+                "What categories are available?",
+            ],
+            parameters=[],
+        ),
+        ToolCapability(
             tool_name="explain_capabilities",
             description="List all available analytics tools and example questions",
             example_questions=[
@@ -221,10 +823,9 @@ def explain_capabilities() -> dict:
     response = AgentCapabilities(
         tool_used="explain_capabilities",
         summary=(
-            f"I have {len(capabilities)} analytics tools available. "
-            "I can analyze revenue by category with date and category filters. "
-            "More tools will be added for customer LTV, return rates, "
-            "regional comparisons, and month-over-month analysis."
+            f"I have {len(capabilities)} analytics tools available: "
+            "revenue by category, customer lifetime value, return rates, "
+            "regional comparison, and month-over-month analysis."
         ),
         data=capabilities,
         total_tools=len(capabilities),

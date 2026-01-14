@@ -75,6 +75,114 @@ class RevenueByCategory(BaseToolResponse):
     top_category: str
 
 
+# === Customer Lifetime Value ===
+
+
+class CustomerLTV(BaseModel):
+    """LTV metrics for a single customer."""
+
+    customer_id: str
+    total_spent: float
+    transaction_count: int
+    avg_transaction_value: float
+    region: str
+    segment: str
+    rank: int
+
+
+class CustomerLifetimeValue(BaseToolResponse):
+    """Response for get_customer_ltv tool."""
+
+    data: list[CustomerLTV]
+    average_ltv: float
+    total_customers_analyzed: int
+
+
+# === Return Rates ===
+
+
+class CategoryReturnRate(BaseModel):
+    """Return rate metrics for a single category."""
+
+    category: str
+    total_transactions: int
+    returned_count: int
+    return_rate_percent: float
+    revenue_lost_to_returns: float
+
+
+class ReturnRateByCategory(BaseToolResponse):
+    """Response for get_return_rates tool."""
+
+    data: list[CategoryReturnRate]
+    overall_return_rate: float
+    highest_return_category: str
+    total_revenue_lost: float
+
+
+# === Regional Comparison ===
+
+
+class RegionMetrics(BaseModel):
+    """Performance metrics for a single region."""
+
+    region: str
+    total_revenue: float
+    customer_count: int
+    transaction_count: int
+    avg_transaction_value: float
+    return_rate_percent: float
+
+
+class RegionalComparison(BaseToolResponse):
+    """Response for compare_regions tool."""
+
+    data: list[RegionMetrics]
+    top_region_by_revenue: str
+    top_region_by_customers: str
+
+
+# === Month-over-Month Performance ===
+
+
+class PeriodMetrics(BaseModel):
+    """Metrics for a single time period."""
+
+    period_label: str
+    start_date: str
+    end_date: str
+    revenue: float
+    transaction_count: int
+    unique_customers: int
+    avg_transaction_value: float
+
+
+class MonthOverMonth(BaseToolResponse):
+    """Response for get_month_over_month tool."""
+
+    current_period: PeriodMetrics
+    previous_period: PeriodMetrics
+    revenue_change_percent: float
+    transaction_change_percent: float
+    trend: str  # "growth", "decline", "stable"
+
+
+# === Data Overview ===
+
+
+class DataOverview(BaseToolResponse):
+    """Response for get_data_overview tool."""
+
+    data_start: str
+    data_end: str
+    transaction_count: int
+    customer_count: int
+    categories: list[str]
+    regions: list[str]
+    segments: list[str]
+    payment_methods: list[str]
+
+
 # === Agent Capabilities ===
 
 
